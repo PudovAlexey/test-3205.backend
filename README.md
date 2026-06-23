@@ -1,82 +1,99 @@
-# URL Checker — Backend
+# URL Checker — бэкенд
 
-Async URL-checking service built with **NestJS + TypeScript**. Submit a list of
-URLs, the service runs HTTP `HEAD` requests in the background (max 5 concurrent
-per job, multiple jobs run in parallel), and you poll for results.
+Сервис асинхронной проверки URL на **NestJS + TypeScript**. Принимает список
+URL, в фоне отправляет HTTP `HEAD`-запросы (не более 5 одновременно на одно
+задание, несколько заданий обрабатываются параллельно), а статус и результаты
+забираются опросом.
 
-In-memory storage only — no database required.
+Хранение — только в памяти, база данных не нужна.
 
-## Requirements
+## Архитектура
+
+Луковичная (onion) архитектура с инверсией зависимостей через порты —
+абстрактные классы выступают DI-токенами. Зависимости направлены строго внутрь:
+`presentation → application → domain ← infrastructure`. О конкретных реализациях
+знает только composition root (`jobs.module.ts`).
+
+```
+src/
+  domain/jobs/         # ядро: сущности (Job, UrlResult) и порты (JobRepository, UrlChecker)
+  application/jobs/    # сценарии: JobsService + фоновый JobsProcessor
+  infrastructure/jobs/ # адаптеры портов: InMemoryJobRepository, UndiciUrlChecker
+  presentation/jobs/   # HTTP: контроллер + DTO
+  jobs.module.ts       # composition root — связывает порты с реализациями
+```
+
+## Требования
 
 - Node.js 20+
 - npm
 
-## Install & run
+## Установка и запуск
 
 ```bash
 npm install
 npm run build
 npm run start:prod        # node dist/main.js
 
-# or in dev (watch mode):
+# или в режиме разработки (watch):
 npm run start:dev
 ```
 
-The server listens on `PORT` (default `3000`).
+Сервер слушает порт `PORT` (по умолчанию `3000`).
 
 - Swagger UI: `http://localhost:3000/api/docs`
 - Health:     `http://localhost:3000/api/health`
 
-## Configuration (env vars)
+## Конфигурация (переменные окружения)
 
-Copy `.env.example` → `.env` and adjust as needed.
+Скопируйте `.env.example` → `.env` и при необходимости поправьте значения.
 
-| Variable          | Default | Meaning                                        |
-| ----------------- | ------- | ---------------------------------------------- |
-| `PORT`            | `3000`  | HTTP port                                      |
-| `MAX_CONCURRENCY` | `5`     | Max concurrent HEAD requests **per job**       |
-| `DELAY_MAX_MS`    | `10000` | Upper bound of the artificial pre-save delay   |
-| `HEAD_TIMEOUT_MS` | `10000` | HEAD request header/body timeout               |
-| `CORS_ORIGIN`     | `*`     | Allowed CORS origin                            |
-| `LOG_LEVEL`       | `info`  | Log level                                      |
+| Переменная        | По умолчанию | Назначение                                          |
+| ----------------- | ------------ | --------------------------------------------------- |
+| `PORT`            | `3000`       | HTTP-порт                                           |
+| `MAX_CONCURRENCY` | `5`          | Макс. число одновременных HEAD-запросов **на задание** |
+| `DELAY_MAX_MS`    | `10000`      | Верхняя граница искусственной задержки перед сохранением результата |
+| `HEAD_TIMEOUT_MS` | `10000`      | Таймаут заголовков/тела HEAD-запроса                |
+| `CORS_ORIGIN`     | `*`          | Разрешённый источник CORS                           |
+| `LOG_LEVEL`       | `info`       | Уровень логирования                                 |
 
 ## API
 
-| Method   | Path             | Description                                   |
-| -------- | ---------------- | --------------------------------------------- |
-| `POST`   | `/api/jobs`      | Create a job. Body `{ "urls": [...] }` → `{ jobId }` (201). |
-| `GET`    | `/api/jobs`      | List job summaries (newest first).            |
-| `GET`    | `/api/jobs/:id`  | Full job detail (404 if missing).             |
-| `DELETE` | `/api/jobs/:id`  | Cancel a job (idempotent). Returns full detail (200). |
-| `GET`    | `/api/health`    | `{ "status": "ok" }`                          |
+| Метод    | Путь             | Описание                                            |
+| -------- | ---------------- | --------------------------------------------------- |
+| `POST`   | `/api/jobs`      | Создать задание. Тело `{ "urls": [...] }` → `{ jobId }` (201). |
+| `GET`    | `/api/jobs`      | Список заданий (свежие сверху).                     |
+| `GET`    | `/api/jobs/:id`  | Полная информация о задании (404, если не найдено). |
+| `DELETE` | `/api/jobs/:id`  | Отменить задание (идемпотентно). Возвращает полную информацию (200). |
+| `GET`    | `/api/health`    | `{ "status": "ok" }`                                |
 
-### Status enums
+### Статусы
 
-- Job: `pending | in_progress | completed | cancelled | failed`
-  (`failed` is reserved for internal engine errors — a job whose URLs all
-  error out still ends `completed`.)
+- Задание (Job): `pending | in_progress | completed | cancelled | failed`
+  (`failed` — только для внутренних ошибок движка; задание, у которого все URL
+  завершились ошибкой, всё равно получает статус `completed`.)
 - URL: `pending | in_progress | success | error | cancelled`
 
-## Tests
+## Тесты
 
 ```bash
-npm test           # unit specs
-npm run test:e2e   # supertest e2e (deterministic, fake URL checker)
+npm test           # модульные тесты
+npm run test:e2e   # e2e на supertest (детерминированные, с фейковым URL-checker)
 npm run lint
 ```
 
 ## Docker
 
 ```bash
-# Compose (recommended) — builds the image and runs with a health check:
+# Compose (рекомендуется) — собирает образ и запускает с health-check:
 docker compose up --build
 
-# or build & run by hand:
+# или вручную:
 docker build -t url-checker-backend .
 docker run -p 3000:3000 url-checker-backend
 ```
 
-## Quick smoke test
+## Быстрая проверка
 
 ```bash
 curl -s localhost:3000/api/health
